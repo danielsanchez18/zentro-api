@@ -1,0 +1,38 @@
+// Prisma Schema — Zentro API
+// v7: La URL de la BD se configura en prisma.config.ts
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ⚪ MÓDULO AUTH
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  password     String
+  name         String
+  organization String?
+  branch       String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// Códigos de recuperación de contraseña (forgot password)
+// Solo se guarda el HASH del código (sha256), nunca el código en claro.
+model PasswordResetCode {
+  id        String    @id @default(uuid())
+  email     String
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int       @default(0)
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([email])
+}
