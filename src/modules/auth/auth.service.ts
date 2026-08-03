@@ -18,8 +18,7 @@ const PUBLIC_USER_FIELDS = {
   id: true,
   email: true,
   name: true,
-  organization: true,
-  branch: true,
+  emailVerifiedAt: true,
   createdAt: true,
   updatedAt: true,
 } as const;

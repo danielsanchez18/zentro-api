@@ -21,4 +21,8 @@ export const appConfig = () => ({
     ttlMinutes: parseInt(process.env.RESET_CODE_TTL_MINUTES ?? '15', 10),
     maxAttempts: parseInt(process.env.RESET_CODE_MAX_ATTEMPTS ?? '5', 10),
   },
+  trial: {
+    planSlug: process.env.TRIAL_PLAN_SLUG ?? 'trial',
+    days: parseInt(process.env.TRIAL_DAYS ?? '30', 10),
+  },
 });

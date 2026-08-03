@@ -1,5 +1,14 @@
 // Prisma Schema — Zentro API
-// v7: La URL de la BD se configura en prisma.config.ts
+// v8: Multi-tenant + Account Hub. URL de la BD en prisma.config.ts (env DATABASE_URL).
+//
+// Modelos: User + entidades del tenant (Organization, Branch, Membership, RBAC,
+// Invitation, Subscription/Plan/Invoice) + IdentityProvider, NotificationPreference,
+// OnboardingProgress, y se conserva PasswordResetCode.
+//
+// Convenciones:
+// - IDs uuid() (consistente con el schema v7).
+// - Aislamiento por tenant: toda entidad de negocio lleva organizationId.
+// - Org.modules / Org.features / Role.permissionCodes como Json (data-driven).
 
 generator client {
   provider     = "prisma-client"
@@ -13,18 +22,23 @@ datasource db {
 
 // ⚪ MÓDULO AUTH
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  password     String
-  name         String
-  organization String?
-  branch       String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String    @id @default(uuid())
+  email           String    @unique
+  password        String
+  name            String
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  memberships        Membership[]
+  sentInvitations    Invitation[]           @relation("SentBy")
+  acceptedInvitations Invitation[]          @relation("AcceptedBy")
+  identityProviders  IdentityProvider[]
+  notificationPrefs  NotificationPreference[]
+  onboardingProgress OnboardingProgress?
 }
 
-// Códigos de recuperación de contraseña (forgot password)
-// Solo se guarda el HASH del código (sha256), nunca el código en claro.
+// Códigos de recuperación de contraseña (solo se guarda el HASH, nunca en claro).
 model PasswordResetCode {
   id        String    @id @default(uuid())
   email     String
@@ -35,4 +49,221 @@ model PasswordResetCode {
   createdAt DateTime  @default(now())
 
   @@index([email])
+}
+
+// ⚪ MULTI-TENANT
+model Organization {
+  id         String   @id @default(uuid())
+  slug       String   @unique // ej: las-rocas
+  name       String
+  legalName  String?
+  email      String?
+  phone      String?
+  logoUrl    String?
+  timezone   String   @default("America/Lima")
+  industry   String? // RESTAURANT | RETAIL | SERVICE | HEALTH | OTHER
+  description String?
+  country    String?  // ej: "PE"
+  currency   String   @default("PEN")
+  status     String   @default("REGISTERED") // REGISTERED | ACTIVE | SUSPENDED | CANCELED
+
+  modules     Json     @default("[]") // ["VENTAS","CLIENTES",...]
+  features    Json     @default("[]") // ["pos","catalog","crm",...]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships  Membership[]
+  invitations  Invitation[]
+  subscription Subscription?
+  branches     Branch[]
+  roles        Role[]
+  invoices     Invoice[]
+}
+
+model Membership {
+  id             String   @id @default(uuid())
+  userId         String
+  organizationId String
+  roleId         String
+  status         String   @default("ACTIVE") // ACTIVE | SUSPENDED
+  isActive       Boolean  @default(false)    // contexto activo del usuario (switcher)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role         Role         @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+// RBAC: users -> roles -> permissions
+model Role {
+  id              String   @id @default(uuid())
+  organizationId  String
+  name            String
+  system          Boolean  @default(false) // Owner (system) no editable
+  description     String?
+  permissionCodes Json     @default("[]") // ["READ.PRODUCTS", "CREATE.ORDERS", ...]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships  Membership[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+// Catálogo global de permisos (se siembra; las orgs los usan por código en Role.permissionCodes)
+model Permission {
+  id    String @id @default(uuid())
+  code  String @unique
+  name  String
+  scope String @default("ORG") // ORG | GLOBAL
+  group String @default("GENERAL") // agrupación por capacidad (ej: ORDERS, PRODUCTS)
+
+  @@index([scope])
+}
+
+model Invitation {
+  id             String   @id @default(uuid())
+  organizationId String
+  email          String
+  tokenHash      String   @unique
+  roleType       String   @default("MEMBER") // OWNER | ADMIN | MEMBER
+  status         String   @default("PENDING") // PENDING | ACCEPTED | DECLINED | EXPIRED | REVOKED
+  invitedById    String
+  acceptedById   String?
+  expiresAt      DateTime
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("SentBy", fields: [invitedById], references: [id])
+  acceptedBy   User?        @relation("AcceptedBy", fields: [acceptedById], references: [id])
+
+  @@index([email])
+}
+
+model Subscription {
+  id                 String   @id @default(uuid())
+  organizationId     String   @unique
+  planId             String
+  status             String   @default("TRIALING") // TRIALING | ACTIVE | PAST_DUE | CANCELED
+  provider           String   @default("MOCK")    // MOCK | CULQI | MERCADO_PAGO
+  periodStart        DateTime?
+  periodEnd          DateTime?
+  trialEndsAt        DateTime?
+  providerSubId      String?
+  providerCustomerId String?
+  storageLimitMb     Int?     // límites de trial (data-driven, no hardcoded)
+  transactionLimit   Int?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         Plan         @relation(fields: [planId], references: [id])
+  invoices     Invoice[]
+}
+
+model Plan {
+  id            String   @id @default(uuid())
+  slug          String   @unique // trial | esencial | crecimiento | profesional | enterprise
+  name          String
+  description   String?
+  price         Decimal  @default(0)
+  currency      String   @default("USD")
+  interval      String   @default("month")
+  limits        Json     @default("{}") // { "users": 3, "branches": 1, "products": 500 }
+  features      Json     @default("[]") // módulos/capacidades incluidas
+  storageLimit  Int?
+  transactionLimit Int?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+model Invoice {
+  id                String   @id @default(uuid())
+  organizationId    String
+  subscriptionId    String?
+  number            String
+  status            String   @default("OPEN") // DRAFT | OPEN | PAID | VOID
+  amount            Decimal
+  currency          String   @default("USD")
+  periodStart       DateTime?
+  periodEnd         DateTime?
+  dueDate           DateTime?
+  paidAt            DateTime?
+  providerInvoiceId String?
+  pdfUrl            String?
+  createdAt         DateTime @default(now())
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  @@index([organizationId])
+}
+
+model Branch {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  isDefault      Boolean  @default(false) // sucursal principal (no eliminable)
+  type           String   @default("MAIN") // MAIN | ADDITIONAL
+  address        String?
+  phone          String?
+  email          String?
+  openingHours   Json     @default("{}") // { "mon": "09:00-18:00", ... }
+  lat            Float?
+  lng            Float?
+  status         String   @default("ACTIVE") // ACTIVE | INACTIVE
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+// ⚪ IDENTIDAD / INTEGRACIONES
+model IdentityProvider {
+  id         String   @id @default(uuid())
+  userId     String
+  provider   String   // GOOGLE | FACEBOOK
+  providerId String
+  email      String?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerId])
+  @@index([userId])
+}
+
+model NotificationPreference {
+  id      String @id @default(uuid())
+  userId  String
+  type    String // INVITATION | BILLING | RECOVERY | SECURITY | MARKETING
+  channel String @default("EMAIL")
+  enabled Boolean @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+}
+
+model OnboardingProgress {
+  id          String    @id @default(uuid())
+  userId      String    @unique
+  steps       Json      @default("[]") // [{ key: "create_org", done: false }, ...]
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
