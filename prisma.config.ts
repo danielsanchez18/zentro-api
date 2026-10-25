@@ -11,5 +11,7 @@ export default defineConfig({
   },
   datasource: {
     url: env('DATABASE_URL'),
+    // Base temporal que usa `prisma migrate dev`/`migrate diff` para validar migraciones.
+    shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL,
   },
 });

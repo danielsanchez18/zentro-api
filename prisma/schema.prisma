@@ -1,6 +1,3 @@
-// Prisma Schema — Zentro API
-// v7: La URL de la BD se configura en prisma.config.ts
-
 generator client {
   provider     = "prisma-client"
   output       = "../generated/prisma"
@@ -11,23 +8,60 @@ datasource db {
   provider = "postgresql"
 }
 
-// ⚪ MÓDULO AUTH
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  password     String
-  name         String
-  organization String?
-  branch       String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                                       String                   @id @default(uuid())
+  email                                    String                   @unique
+  password                                 String
+  name                                     String
+  createdAt                                DateTime                 @default(now())
+  updatedAt                                DateTime                 @updatedAt
+  emailVerifiedAt                          DateTime?
+  phone                                    String?
+  /// Foto de perfil como data URL (JPEG 256×256 redimensionada en el cliente).
+  avatarUrl                                String?
+  /// Cuándo el usuario definió su contraseña. Null = cuenta creada con Google
+  /// sin contraseña propia (la columna password tiene un hash inutilizable).
+  passwordSetAt                            DateTime?
+  /// Secreto TOTP cifrado (AES-256-GCM). Con totpEnabledAt null es una activación pendiente.
+  totpSecret                               String?
+  /// Verificación en dos pasos activa desde esta fecha.
+  totpEnabledAt                            DateTime?
+  /// Hashes SHA-256 de los códigos de respaldo sin usar.
+  totpRecoveryCodes                        String[]                 @default([])
+  /// Último periodo TOTP aceptado (evita reutilizar un código dentro de sus 30 s).
+  totpLastTimeStep                         Int?
+  IdentityProvider                         IdentityProvider[]
+  Invitation_Invitation_acceptedByIdToUser Invitation[]             @relation("Invitation_acceptedByIdToUser")
+  Invitation_Invitation_invitedByIdToUser  Invitation[]             @relation("Invitation_invitedByIdToUser")
+  Membership                               Membership[]
+  NotificationPreference                   NotificationPreference[]
+  OnboardingProgress                       OnboardingProgress?
+  UserSession                              UserSession[]
 }
 
-// Códigos de recuperación de contraseña (forgot password)
-// Solo se guarda el HASH del código (sha256), nunca el código en claro.
+/// Sesión de un usuario en un dispositivo. Guarda el hash del refresh token
+/// (rotativo, en cookie httpOnly). Revocarla cierra la sesión en ese dispositivo.
+model UserSession {
+  id               String    @id @default(uuid())
+  userId           String
+  refreshTokenHash String    @unique
+  userAgent        String?
+  ipAddress        String?
+  createdAt        DateTime  @default(now())
+  lastUsedAt       DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  User             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// Códigos OTP de 6 dígitos enviados por correo. `purpose` separa la
+/// recuperación de contraseña de la verificación de correo.
 model PasswordResetCode {
   id        String    @id @default(uuid())
   email     String
+  purpose   String    @default("RESET_PASSWORD") // RESET_PASSWORD | VERIFY_EMAIL
   codeHash  String
   expiresAt DateTime
   attempts  Int       @default(0)
@@ -35,4 +69,219 @@ model PasswordResetCode {
   createdAt DateTime  @default(now())
 
   @@index([email])
+}
+
+model Branch {
+  id             String       @id @default(uuid())
+  organizationId String
+  name           String
+  isDefault      Boolean      @default(false)
+  type           String       @default("MAIN")
+  address        String?
+  phone          String?
+  email          String?
+  openingHours   Json         @default("{}")
+  lat            Float?
+  lng            Float?
+  status         String       @default("ACTIVE")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  Organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model IdentityProvider {
+  id         String   @id @default(uuid())
+  userId     String
+  provider   String
+  providerId String
+  email      String?
+  createdAt  DateTime @default(now())
+  User       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerId])
+  @@index([userId])
+}
+
+model Invitation {
+  id                                 String       @id @default(uuid())
+  organizationId                     String
+  email                              String
+  tokenHash                          String       @unique
+  roleType                           String       @default("MEMBER")
+  status                             String       @default("PENDING")
+  invitedById                        String
+  acceptedById                       String?
+  expiresAt                          DateTime
+  createdAt                          DateTime     @default(now())
+  User_Invitation_acceptedByIdToUser User?        @relation("Invitation_acceptedByIdToUser", fields: [acceptedById], references: [id])
+  User_Invitation_invitedByIdToUser  User         @relation("Invitation_invitedByIdToUser", fields: [invitedById], references: [id])
+  Organization                       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([email])
+}
+
+model Invoice {
+  id                String        @id @default(uuid())
+  organizationId    String
+  subscriptionId    String?
+  number            String
+  status            String        @default("OPEN")
+  amount            Decimal
+  currency          String        @default("USD")
+  periodStart       DateTime?
+  periodEnd         DateTime?
+  dueDate           DateTime?
+  paidAt            DateTime?
+  providerInvoiceId String?
+  pdfUrl            String?
+  createdAt         DateTime      @default(now())
+  Organization      Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  Subscription      Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  @@index([organizationId])
+}
+
+model Membership {
+  id             String       @id @default(uuid())
+  userId         String
+  organizationId String
+  roleId         String
+  status         String       @default("ACTIVE")
+  isActive       Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  Organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  Role           Role         @relation(fields: [roleId], references: [id])
+  User           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+model NotificationPreference {
+  id      String  @id @default(uuid())
+  userId  String
+  type    String
+  channel String  @default("EMAIL")
+  enabled Boolean @default(true)
+  User    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+}
+
+model OnboardingProgress {
+  id          String    @id @default(uuid())
+  userId      String    @unique
+  steps       Json      @default("[]")
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  User        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Organization {
+  id           String        @id @default(uuid())
+  slug         String        @unique
+  name         String
+  legalName    String?
+  email        String?
+  phone        String?
+  logoUrl      String?
+  timezone     String        @default("America/Lima")
+  industry     String?
+  description  String?
+  country      String?
+  currency     String        @default("PEN")
+  status       String        @default("REGISTERED")
+  modules      Json          @default("[]")
+  features     Json          @default("[]")
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  Branch       Branch[]
+  Invitation   Invitation[]
+  Invoice      Invoice[]
+  Membership   Membership[]
+  Role         Role[]
+  Subscription Subscription?
+}
+
+model Permission {
+  id    String @id @default(uuid())
+  code  String @unique
+  name  String
+  scope String @default("ORG")
+  group String @default("GENERAL")
+
+  @@index([scope])
+}
+
+model Plan {
+  id               String         @id @default(uuid())
+  slug             String         @unique
+  name             String
+  description      String?
+  price            Decimal        @default(0)
+  currency         String         @default("USD")
+  interval         String         @default("month")
+  limits           Json           @default("{}")
+  features         Json           @default("[]")
+  storageLimit     Int?
+  transactionLimit Int?
+  active           Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  Subscription     Subscription[]
+}
+
+model Role {
+  id              String       @id @default(uuid())
+  organizationId  String
+  name            String
+  system          Boolean      @default(false)
+  description     String?
+  permissionCodes Json         @default("[]")
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  Membership      Membership[]
+  Organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+model Subscription {
+  id                 String       @id @default(uuid())
+  organizationId     String       @unique
+  planId             String
+  status             String       @default("TRIALING")
+  provider           String       @default("MOCK")
+  periodStart        DateTime?
+  periodEnd          DateTime?
+  trialEndsAt        DateTime?
+  providerSubId      String?
+  providerCustomerId String?
+  storageLimitMb     Int?
+  transactionLimit   Int?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  Invoice            Invoice[]
+  Organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  Plan               Plan         @relation(fields: [planId], references: [id])
+}
+
+// ⚪ MÓDULO CONTACT — Mensajes del formulario de contacto de la landing
+model ContactMessage {
+  id           String    @id @default(uuid())
+  topic        String // demo | soporte | alianzas | otro
+  name         String
+  email        String
+  organization String?
+  phone        String?
+  message      String
+  readAt       DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([createdAt])
 }

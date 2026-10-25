@@ -8,18 +8,21 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { createHash, randomInt } from 'crypto';
+import { createHash, randomInt, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { SessionMeta, SessionService } from './session.service';
+import { TwoFactorService } from './two-factor/two-factor.service';
 
 const PUBLIC_USER_FIELDS = {
   id: true,
   email: true,
   name: true,
-  organization: true,
-  branch: true,
+  emailVerifiedAt: true,
+  avatarUrl: true,
+  phone: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -31,9 +34,11 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly mail: MailService,
+    private readonly sessions: SessionService,
+    private readonly twoFactor: TwoFactorService,
   ) {}
 
-  async register(dto: RegisterDto) {
+  async register(dto: RegisterDto, meta: SessionMeta = {}) {
     const existing = await this.prisma.user.findUnique({
       where: { email: dto.email.toLowerCase() },
     });
@@ -48,18 +53,16 @@ export class AuthService {
       data: {
         email: dto.email.toLowerCase(),
         password: hashed,
+        passwordSetAt: new Date(),
         name: dto.name,
       },
       select: PUBLIC_USER_FIELDS,
     });
 
-    return {
-      user,
-      token: this.signToken(user.id, user.email),
-    };
+    return { user, ...(await this.createSession(user.id, user.email, meta)) };
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, meta: SessionMeta = {}) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email.toLowerCase() },
     });
@@ -68,16 +71,71 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    const valid = await bcrypt.compare(dto.password, user.password);
+    const valid =
+      user.passwordSetAt !== null &&
+      (await bcrypt.compare(dto.password, user.password));
     if (!valid) {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    const { password: _password, ...safeUser } = user;
+    // Con 2FA activa no se abre sesión: el frontend pide el código.
+    if (user.totpEnabledAt) {
+      return {
+        twoFactorRequired: true as const,
+        challenge: this.twoFactor.createChallenge(user.id),
+      };
+    }
+
+    const safeUser = await this.prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: PUBLIC_USER_FIELDS,
+    });
 
     return {
       user: safeUser,
-      token: this.signToken(user.id, user.email),
+      ...(await this.createSession(user.id, user.email, meta)),
+    };
+  }
+
+  /** Segundo paso del login: código de la app o de respaldo → sesión. */
+  async completeTwoFactor(challenge: string, code: string, meta: SessionMeta) {
+    const { id, email } = await this.twoFactor.completeChallenge(
+      challenge,
+      code,
+    );
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id },
+      select: PUBLIC_USER_FIELDS,
+    });
+    return { user, ...(await this.createSession(id, email, meta)) };
+  }
+
+  /** Rota el refresh token de la cookie y emite un access token nuevo. */
+  async refresh(refreshToken: string | undefined, meta: SessionMeta = {}) {
+    const { session, refreshToken: nextToken } = await this.sessions.rotate(
+      refreshToken,
+      meta,
+    );
+    const { user } = await this.me(session.userId);
+    return {
+      user,
+      accessToken: this.signAccessToken(user.id, user.email, session.id),
+      refreshToken: nextToken,
+      refreshExpiresAt: session.expiresAt,
+    };
+  }
+
+  logout(refreshToken: string | undefined) {
+    return this.sessions.revokeByToken(refreshToken);
+  }
+
+  /** Abre una sesión (refresh en cookie + access token). También la usa OAuth. */
+  async createSession(userId: string, email: string, meta: SessionMeta) {
+    const { session, refreshToken } = await this.sessions.create(userId, meta);
+    return {
+      accessToken: this.signAccessToken(userId, email, session.id),
+      refreshToken,
+      refreshExpiresAt: session.expiresAt,
     };
   }
 
@@ -129,12 +187,13 @@ export class AuthService {
 
       // Invalida códigos anteriores sin usar para el mismo correo
       await this.prisma.passwordResetCode.updateMany({
-        where: { email: normalized, usedAt: null },
+        where: { email: normalized, usedAt: null, purpose: 'RESET_PASSWORD' },
         data: { usedAt: new Date() },
       });
 
       await this.prisma.passwordResetCode.create({
         data: {
+          purpose: 'RESET_PASSWORD',
           email: normalized,
           codeHash,
           expiresAt: new Date(Date.now() + ttlMinutes * 60_000),
@@ -144,18 +203,24 @@ export class AuthService {
       try {
         await this.mail.sendPasswordResetCode(user.email, user.name, code);
       } catch {
-        throw new BadGatewayException('No pudimos enviar el correo. Inténtalo de nuevo.');
+        throw new BadGatewayException(
+          'No pudimos enviar el correo. Inténtalo de nuevo.',
+        );
       }
 
-      // En desarrollo el código se devuelve para poder probar el flujo
-      // sin abrir el correo (E2E, demos). Nunca en producción.
-      if (process.env.NODE_ENV !== 'production') {
+      // Solo con el driver "log" (sin correo real) se devuelve el código, para
+      // poder probar el flujo localmente. Con Resend nunca sale en la respuesta.
+      if (
+        this.config.get<string>('mail.driver') === 'log' &&
+        process.env.NODE_ENV !== 'production'
+      ) {
         devCode = code;
       }
     }
 
     return {
-      message: 'Si el correo está registrado, recibirás un código de recuperación.',
+      message:
+        'Si el correo está registrado, recibirás un código de recuperación.',
       ...(devCode ? { devCode } : {}),
     };
   }
@@ -167,7 +232,7 @@ export class AuthService {
       throw new BadRequestException('El código es inválido o ha expirado.');
     }
 
-    if (record.codeHash !== this.hashCode(code)) {
+    if (!this.sameHash(record.codeHash, this.hashCode(code))) {
       await this.registerFailedAttempt(record.id);
       throw new BadRequestException('El código es incorrecto.');
     }
@@ -183,25 +248,31 @@ export class AuthService {
       throw new BadRequestException('El código es inválido o ha expirado.');
     }
 
-    if (record.codeHash !== this.hashCode(code)) {
+    if (!this.sameHash(record.codeHash, this.hashCode(code))) {
       await this.registerFailedAttempt(record.id);
       throw new BadRequestException('El código es incorrecto.');
     }
 
     const hashed = await bcrypt.hash(newPassword, 10);
 
-    await this.prisma.user.update({
+    const user = await this.prisma.user.update({
       where: { email: normalized },
-      data: { password: hashed },
+      data: { password: hashed, passwordSetAt: new Date() },
+      select: { id: true },
     });
+
+    // Cambiar la contraseña cierra la sesión en todos los dispositivos.
+    await this.sessions.revokeAll(user.id);
 
     // Consume el código usado y deja inservibles los demás del mismo correo
     await this.prisma.passwordResetCode.updateMany({
-      where: { email: normalized, usedAt: null },
+      where: { email: normalized, usedAt: null, purpose: 'RESET_PASSWORD' },
       data: { usedAt: new Date() },
     });
 
-    return { message: 'Tu contraseña fue actualizada. Ya puedes iniciar sesión.' };
+    return {
+      message: 'Tu contraseña fue actualizada. Ya puedes iniciar sesión.',
+    };
   }
 
   /* ------------------------------------------------------------------ */
@@ -210,7 +281,12 @@ export class AuthService {
 
   private findValidRecord(email: string) {
     return this.prisma.passwordResetCode.findFirst({
-      where: { email, usedAt: null, expiresAt: { gt: new Date() } },
+      where: {
+        email,
+        purpose: 'RESET_PASSWORD',
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -240,12 +316,23 @@ export class AuthService {
     return createHash('sha256').update(code).digest('hex');
   }
 
-  private signToken(userId: string, email: string): string {
+  private sameHash(a: string, b: string): boolean {
+    const left = Buffer.from(a, 'hex');
+    const right = Buffer.from(b, 'hex');
+    return left.length === right.length && timingSafeEqual(left, right);
+  }
+
+  /** Access token corto (15 min por defecto). `sid` permite invalidarlo al revocar la sesión. */
+  private signAccessToken(
+    userId: string,
+    email: string,
+    sessionId: string,
+  ): string {
     return this.jwt.sign(
-      { sub: userId, email },
+      { sub: userId, email, sid: sessionId },
       {
         secret: this.config.get('jwt.secret') ?? 'dev-secret',
-        expiresIn: this.config.get('jwt.expiresIn') ?? '7d',
+        expiresIn: this.config.get('jwt.accessExpiresIn') ?? '15m',
       },
     );
   }
