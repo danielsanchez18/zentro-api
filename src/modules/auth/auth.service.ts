@@ -15,6 +15,10 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { SessionMeta, SessionService } from './session.service';
 import { TwoFactorService } from './two-factor/two-factor.service';
+import {
+  NotificationsService,
+  describeDevice,
+} from '../notifications/notifications.service';
 
 const PUBLIC_USER_FIELDS = {
   id: true,
@@ -36,6 +40,7 @@ export class AuthService {
     private readonly mail: MailService,
     private readonly sessions: SessionService,
     private readonly twoFactor: TwoFactorService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async register(dto: RegisterDto, meta: SessionMeta = {}) {
@@ -91,10 +96,19 @@ export class AuthService {
       select: PUBLIC_USER_FIELDS,
     });
 
-    return {
-      user: safeUser,
-      ...(await this.createSession(user.id, user.email, meta)),
-    };
+    const session = await this.createSession(user.id, user.email, meta);
+    await this.notifyLogin(user.id, meta);
+    return { user: safeUser, ...session };
+  }
+
+  /** Aviso "Nuevo inicio de sesión" en la campana (login, 2FA y Google; no el registro). */
+  async notifyLogin(userId: string, meta: SessionMeta) {
+    await this.notifications.notify(userId, {
+      type: 'SECURITY',
+      title: 'Nuevo inicio de sesión',
+      body: `Se inició sesión desde ${describeDevice(meta.userAgent)}. Si no fuiste tú, cambia tu contraseña.`,
+      href: '/dashboard/cuenta?tab=seguridad',
+    });
   }
 
   /** Segundo paso del login: código de la app o de respaldo → sesión. */
@@ -107,7 +121,9 @@ export class AuthService {
       where: { id },
       select: PUBLIC_USER_FIELDS,
     });
-    return { user, ...(await this.createSession(id, email, meta)) };
+    const session = await this.createSession(id, email, meta);
+    await this.notifyLogin(id, meta);
+    return { user, ...session };
   }
 
   /** Rota el refresh token de la cookie y emite un access token nuevo. */

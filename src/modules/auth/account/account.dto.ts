@@ -22,6 +22,12 @@ export class UpdateProfileDto {
   phone?: string;
 }
 
+/** Guía "Primeros pasos" del Hub: oculta (true) o visible (false). */
+export class UpdateOnboardingDto {
+  @IsBoolean()
+  skipped!: boolean;
+}
+
 export class ConfirmEmailDto {
   @Matches(/^\d{6}$/, { message: 'El código debe tener 6 dígitos.' })
   code!: string;

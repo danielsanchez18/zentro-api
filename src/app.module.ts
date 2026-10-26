@@ -7,6 +7,10 @@ import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { MailModule } from './modules/mail/mail.module';
 import { ContactModule } from './modules/contact/contact.module';
+import { OrganizationsModule } from './modules/organizations/organizations.module';
+import { InvitationsModule } from './modules/invitations/invitations.module';
+import { SubscriptionsModule } from './modules/subscriptions/subscriptions.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { appConfig } from './config/app.config';
 
 // Módulos de negocio (se importarán cuando existan)
@@ -26,6 +30,10 @@ import { appConfig } from './config/app.config';
     HealthModule,
     AuthModule,
     ContactModule,
+    OrganizationsModule,
+    InvitationsModule,
+    SubscriptionsModule,
+    NotificationsModule,
 
     // Módulos de negocio: se habilitan al implementar cada uno
     // UsersModule,

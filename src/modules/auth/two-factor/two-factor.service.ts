@@ -17,6 +17,7 @@ import { generateSecret, generateURI, verify } from 'otplib';
 import * as QRCode from 'qrcode';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { MailService } from '../../mail/mail.service';
+import { NotificationsService } from '../../notifications/notifications.service';
 
 const RECOVERY_CODES = 10;
 /** El desafío de inicio de sesión dura 5 minutos. */
@@ -56,6 +57,7 @@ export class TwoFactorService {
     private readonly config: ConfigService,
     private readonly jwt: JwtService,
     private readonly mail: MailService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /* ---------------------------- Cifrado ---------------------------- */
@@ -174,6 +176,12 @@ export class TwoFactorService {
         ),
       },
     });
+    await this.notifications.notify(userId, {
+      type: 'SECURITY',
+      title: 'Verificación en dos pasos activada',
+      body: 'Te pediremos un código de tu app al iniciar sesión.',
+      href: '/dashboard/cuenta?tab=seguridad',
+    });
     void this.mail.sendSecurityNotice(
       user.email,
       user.name,
@@ -205,6 +213,12 @@ export class TwoFactorService {
         totpRecoveryCodes: [],
         totpLastTimeStep: null,
       },
+    });
+    await this.notifications.notify(userId, {
+      type: 'SECURITY',
+      title: 'Verificación en dos pasos desactivada',
+      body: 'Tu cuenta ya no pide un código de la app al iniciar sesión.',
+      href: '/dashboard/cuenta?tab=seguridad',
     });
     void this.mail.sendSecurityNotice(
       user.email,

@@ -36,6 +36,7 @@ model User {
   Membership                               Membership[]
   NotificationPreference                   NotificationPreference[]
   OnboardingProgress                       OnboardingProgress?
+  Notification                             Notification[]
   UserSession                              UserSession[]
 }
 
@@ -113,13 +114,21 @@ model Invitation {
   status                             String       @default("PENDING")
   invitedById                        String
   acceptedById                       String?
+  /// Rol con el que se une al aceptar (null = el rol se borró; se usa "Miembro").
+  roleId                             String?
+  /// Cuándo se aceptó, rechazó o revocó.
+  /// Mensaje personalizado de quien invita (va en el correo).
+  message                            String?
+  respondedAt                        DateTime?
   expiresAt                          DateTime
   createdAt                          DateTime     @default(now())
   User_Invitation_acceptedByIdToUser User?        @relation("Invitation_acceptedByIdToUser", fields: [acceptedById], references: [id])
   User_Invitation_invitedByIdToUser  User         @relation("Invitation_invitedByIdToUser", fields: [invitedById], references: [id])
   Organization                       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  Role                               Role?        @relation(fields: [roleId], references: [id], onDelete: SetNull)
 
   @@index([email])
+  @@index([organizationId])
 }
 
 model Invoice {
@@ -182,29 +191,35 @@ model OnboardingProgress {
 }
 
 model Organization {
-  id           String        @id @default(uuid())
-  slug         String        @unique
-  name         String
-  legalName    String?
-  email        String?
-  phone        String?
-  logoUrl      String?
-  timezone     String        @default("America/Lima")
-  industry     String?
-  description  String?
-  country      String?
-  currency     String        @default("PEN")
-  status       String        @default("REGISTERED")
-  modules      Json          @default("[]")
-  features     Json          @default("[]")
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  Branch       Branch[]
-  Invitation   Invitation[]
-  Invoice      Invoice[]
-  Membership   Membership[]
-  Role         Role[]
-  Subscription Subscription?
+  id               String        @id @default(uuid())
+  slug             String        @unique
+  name             String
+  legalName        String?
+  email            String?
+  phone            String?
+  logoUrl          String?
+  timezone         String        @default("America/Lima")
+  industry         String?
+  description      String?
+  country          String?
+  currency         String        @default("PEN")
+  status           String        @default("REGISTERED")
+  /// Capacidades elegidas en el onboarding (ventas, catalogo, clientes…).
+  modules          Json          @default("[]")
+  features         Json          @default("[]")
+  /// Imagen de portada para las cards del Hub (opcional).
+  coverUrl         String?
+  /// Onboarding de la organización: terminado o pospuesto ("Configurar después").
+  setupCompletedAt DateTime?
+  setupSkippedAt   DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  Branch           Branch[]
+  Invitation       Invitation[]
+  Invoice          Invoice[]
+  Membership       Membership[]
+  Role             Role[]
+  Subscription     Subscription?
 }
 
 model Permission {
@@ -244,6 +259,7 @@ model Role {
   permissionCodes Json         @default("[]")
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
+  Invitation      Invitation[]
   Membership      Membership[]
   Organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
@@ -284,4 +300,22 @@ model ContactMessage {
   createdAt    DateTime  @default(now())
 
   @@index([createdAt])
+}
+
+/// Aviso dentro de la app (campana del Hub). Se lee; las acciones (aceptar
+/// invitaciones, etc.) viven en sus páginas.
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  /// INVITATION | BILLING | SECURITY | ORGANIZATION | PRODUCT
+  type      String
+  title     String
+  body      String
+  /// Ruta interna a la que lleva (opcional).
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  User      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }

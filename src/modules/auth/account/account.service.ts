@@ -11,6 +11,7 @@ import { createHash, randomInt, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { MailService } from '../../mail/mail.service';
 import { SessionService } from '../session.service';
+import { NotificationsService } from '../../notifications/notifications.service';
 import type { OAuthProvider } from '../oauth/oauth.types';
 import { UpdateProfileDto } from './account.dto';
 
@@ -58,6 +59,7 @@ export class AccountService {
     private readonly config: ConfigService,
     private readonly mail: MailService,
     private readonly sessions: SessionService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /* ----------------------------- Perfil ----------------------------- */
@@ -101,6 +103,27 @@ export class AccountService {
       data: { avatarUrl: avatarUrl || null },
     });
     return this.profile(userId);
+  }
+
+  /* -------------------- Guía "Primeros pasos" -------------------- */
+
+  async onboarding(userId: string) {
+    const progress = await this.prisma.onboardingProgress.findUnique({
+      where: { userId },
+      select: { steps: true },
+    });
+    const steps = (progress?.steps ?? {}) as { skippedAt?: string | null };
+    return { skippedAt: steps.skippedAt ?? null };
+  }
+
+  async updateOnboarding(userId: string, skipped: boolean) {
+    const steps = { skippedAt: skipped ? new Date().toISOString() : null };
+    await this.prisma.onboardingProgress.upsert({
+      where: { userId },
+      create: { userId, steps },
+      update: { steps },
+    });
+    return { skippedAt: steps.skippedAt };
   }
 
   /* ------------------------ Verificar correo ------------------------ */
@@ -229,6 +252,14 @@ export class AccountService {
       },
     });
     await this.revokeOtherSessions(userId, currentSessionId);
+    await this.notifications.notify(userId, {
+      type: 'SECURITY',
+      title: user.passwordSetAt
+        ? 'Contraseña actualizada'
+        : 'Contraseña creada',
+      body: 'Cerramos tus sesiones en otros dispositivos. Si no fuiste tú, recupera tu cuenta.',
+      href: '/dashboard/cuenta?tab=seguridad',
+    });
     return {
       message: user.passwordSetAt
         ? 'Tu contraseña fue actualizada.'
@@ -303,6 +334,12 @@ export class AccountService {
     }
 
     await this.prisma.identityProvider.delete({ where: { id: target.id } });
+    await this.notifications.notify(userId, {
+      type: 'SECURITY',
+      title: 'Google desconectado',
+      body: 'Ya no puedes entrar con tu cuenta de Google.',
+      href: '/dashboard/cuenta?tab=seguridad',
+    });
     return this.identities(userId);
   }
 

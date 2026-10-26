@@ -25,6 +25,7 @@ import {
   OAuthSignupRequired,
 } from './oauth.service';
 import { PendingLinkService } from './pending-link.service';
+import { NotificationsService } from '../../notifications/notifications.service';
 import { TwoFactorService } from '../two-factor/two-factor.service';
 import {
   ConfirmPendingLinkDto,
@@ -73,6 +74,7 @@ export class OAuthController {
     private readonly auth: AuthService,
     private readonly pending: PendingLinkService,
     private readonly twoFactor: TwoFactorService,
+    private readonly notifications: NotificationsService,
     // private readonly apple: AppleService,
   ) {}
 
@@ -143,6 +145,12 @@ export class OAuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const user = await this.pending.confirm(dto.token, dto);
+    await this.notifications.notify(user.id, {
+      type: 'SECURITY',
+      title: 'Google conectado',
+      body: 'Confirmaste tu identidad y vinculaste tu cuenta de Google.',
+      href: '/dashboard/cuenta?tab=seguridad',
+    });
     if (await this.twoFactor.isEnabled(user.id)) {
       res.status(HttpStatus.OK);
       return {
@@ -189,6 +197,12 @@ export class OAuthController {
       const userId = this.oauth.readLinkIntent(state, profile.provider);
       if (!userId) return res.redirect(`${back}?linkError=link_expired`);
       await this.oauth.linkToUser(userId, profile);
+      await this.notifications.notify(userId, {
+        type: 'SECURITY',
+        title: 'Google conectado',
+        body: `Ahora también puedes entrar con ${profile.email ?? 'tu cuenta de Google'}.`,
+        href: '/dashboard/cuenta?tab=seguridad',
+      });
       return res.redirect(`${back}?linked=${profile.provider.toLowerCase()}`);
     } catch (error) {
       const code = error instanceof OAuthError ? error.code : 'failed';
@@ -260,6 +274,7 @@ export class OAuthController {
         user.email,
         sessionMeta(req),
       );
+      await this.auth.notifyLogin(user.id, sessionMeta(req));
       setRefreshCookie(res, session.refreshToken, session.refreshExpiresAt);
       // El frontend recupera la sesión con la cookie (/auth/refresh).
       return res.redirect(`${this.frontend}/dashboard`);

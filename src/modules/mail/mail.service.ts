@@ -45,6 +45,25 @@ export class MailService {
     );
   }
 
+  /** Invitación a una organización con enlace de 7 días. Lanza si falla el envío. */
+  sendInvitation(
+    to: string,
+    invite: {
+      orgName: string;
+      inviterName: string;
+      roleName: string;
+      message?: string;
+      link: string;
+    },
+  ) {
+    return this.sendCode(
+      to,
+      `${invite.inviterName} te invitó a ${invite.orgName} — Zentro`,
+      buildInvitationHtml(invite),
+      `Invitación a ${invite.orgName}: ${invite.link}`,
+    );
+  }
+
   /** Aviso de seguridad (2FA activada/desactivada…). Best-effort: no lanza. */
   async sendSecurityNotice(
     to: string,
@@ -227,6 +246,58 @@ const VERIFY_COPY: CodeEmailCopy = {
     'Usa este código para confirmar que este correo es tuyo. Expira en 15 minutos.',
   footer: 'Si no fuiste tú, puedes ignorar este correo.',
 };
+
+function buildInvitationHtml(invite: {
+  orgName: string;
+  inviterName: string;
+  roleName: string;
+  message?: string;
+  link: string;
+}): string {
+  const message = invite.message
+    ? `<p style="margin:16px 0 0 0;padding:12px 16px;background:#f6f5f4;border-left:3px solid #91e62f;border-radius:8px;font-size:14px;line-height:1.6;color:#44403c;white-space:pre-line;">${escapeHtml(invite.message)}</p>`
+    : '';
+  const org = escapeHtml(invite.orgName);
+  return `
+    <!DOCTYPE html>
+    <html>
+      <body style="margin:0;padding:0;background:#f6f5f4;font-family:Arial,Helvetica,sans-serif;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f5f4;padding:32px 16px;">
+          <tr><td align="center">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border:1px solid #e5e2de;border-radius:16px;overflow:hidden;">
+              <tr>
+                <td style="padding:32px 32px 8px 32px;">
+                  <p style="margin:0;font-size:14px;color:#8a857d;">Invitación a Zentro</p>
+                  <h1 style="margin:8px 0 0 0;font-size:22px;color:#1c1917;">Únete a ${org}</h1>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:8px 32px 24px 32px;">
+                  <p style="margin:0;font-size:15px;line-height:1.6;color:#44403c;">
+                    <strong>${escapeHtml(invite.inviterName)}</strong> te invitó a unirte a <strong>${org}</strong>
+                    como <strong>${escapeHtml(invite.roleName)}</strong>.
+                  </p>
+                  ${message}
+                  <p style="margin:24px 0;text-align:center;">
+                    <a href="${escapeHtml(invite.link)}" style="display:inline-block;padding:12px 24px;background:#91e62f;color:#1c1917;border-radius:999px;font-weight:700;font-size:15px;text-decoration:none;">Ver invitación</a>
+                  </p>
+                  <p style="margin:0;font-size:13px;line-height:1.6;color:#8a857d;">
+                    El enlace vence en 7 días. Si no esperabas esta invitación, ignora este correo.
+                  </p>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:16px 32px 24px 32px;border-top:1px solid #e5e2de;">
+                  <p style="margin:0;font-size:12px;color:#a8a29e;">Zentro — Tu negocio, un solo sistema.</p>
+                </td>
+              </tr>
+            </table>
+          </td></tr>
+        </table>
+      </body>
+    </html>
+  `;
+}
 
 function buildResetCodeHtml(
   name: string,

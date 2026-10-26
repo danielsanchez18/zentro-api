@@ -28,6 +28,7 @@ import {
   ChangePasswordDto,
   ConfirmEmailDto,
   UpdateAvatarDto,
+  UpdateOnboardingDto,
   UpdateNotificationPreferenceDto,
   UpdateProfileDto,
   VerifyPasswordDto,
@@ -60,6 +61,19 @@ export class AccountController {
   @Patch()
   update(@Req() req: AuthedRequest, @Body() dto: UpdateProfileDto) {
     return this.account.updateProfile(req.user.userId, dto);
+  }
+
+  @Get('onboarding')
+  onboarding(@Req() req: AuthedRequest) {
+    return this.account.onboarding(req.user.userId);
+  }
+
+  @Put('onboarding')
+  updateOnboarding(
+    @Req() req: AuthedRequest,
+    @Body() dto: UpdateOnboardingDto,
+  ) {
+    return this.account.updateOnboarding(req.user.userId, dto.skipped);
   }
 
   @Put('avatar')
