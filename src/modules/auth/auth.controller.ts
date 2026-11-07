@@ -69,6 +69,7 @@ export class AuthController {
   }
 
   @Throttle(STRICT)
+  @HttpCode(HttpStatus.OK)
   @Post('check-email')
   checkEmail(@Body() dto: CheckEmailDto) {
     return this.authService.checkEmail(dto.email);

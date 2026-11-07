@@ -46,7 +46,7 @@ describe('Zentro API (e2e)', () => {
     request(app.getHttpServer())
       .post('/api/v1/auth/check-email')
       .send({ email: `no-existe-${Date.now()}@example.com` })
-      .expect(201)
+      .expect(200)
       .expect({ exists: false }));
 
   it('POST /api/v1/auth/login rechaza credenciales inválidas', () =>

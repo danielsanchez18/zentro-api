@@ -13,5 +13,9 @@
   "moduleNameMapper": {
     "^(\\.{1,2}/.*)\\.js$": "$1",
     "^otplib$": "<rootDir>/stubs/otplib.ts"
-  }
+  },
+  "setupFiles": [
+    "<rootDir>/setup-env.ts"
+  ],
+  "testTimeout": 30000
 }

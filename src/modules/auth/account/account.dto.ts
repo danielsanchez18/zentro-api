@@ -6,12 +6,14 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { StrongPassword, Trim } from '../../../common/validation';
 
 export class UpdateProfileDto {
   @IsOptional()
+  @Trim()
   @IsString()
-  @MinLength(2)
-  @MaxLength(120)
+  @MinLength(2, { message: 'El nombre debe tener al menos 2 caracteres.' })
+  @MaxLength(120, { message: 'El nombre puede tener hasta 120 caracteres.' })
   name?: string;
 
   /** null o "" borra el teléfono. */
@@ -40,11 +42,7 @@ export class ChangePasswordDto {
   currentPassword?: string;
 
   @IsString()
-  @MinLength(8, { message: 'La contraseña debe tener al menos 8 caracteres.' })
-  @MaxLength(100)
-  @Matches(/^(?=.*[A-Za-z])(?=.*\d).+$/, {
-    message: 'La contraseña debe incluir letras y números.',
-  })
+  @StrongPassword()
   newPassword!: string;
 }
 

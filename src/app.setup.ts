@@ -26,8 +26,10 @@ export function configureApp<T extends INestApplication>(app: T): T {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      // Sin conversión implícita: un string "false" no debe pasar como booleano
+      // (Boolean("false") === true) ni un número como texto.
       transformOptions: {
-        enableImplicitConversion: true,
+        enableImplicitConversion: false,
       },
     }),
   );

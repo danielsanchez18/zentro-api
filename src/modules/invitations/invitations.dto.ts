@@ -7,6 +7,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { Trim } from '../../common/validation';
 
 export class CreateInvitationDto {
   @IsEmail({}, { message: 'Ingresa un correo válido.' })
@@ -20,6 +21,7 @@ export class CreateInvitationDto {
 
   /** Mensaje personalizado que va en el correo. */
   @IsOptional()
+  @Trim()
   @IsString()
   @MaxLength(500, { message: 'El mensaje puede tener hasta 500 caracteres.' })
   message?: string;

@@ -24,7 +24,13 @@ import { appConfig } from './config/app.config';
     }),
     // Rate limiting global: 100 solicitudes por minuto por IP.
     // Los endpoints sensibles de auth tienen un límite más estricto (@Throttle).
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    // THROTTLE_DISABLED=true solo lo usan las pruebas e2e (muchas peticiones seguidas).
+    ThrottlerModule.forRoot({
+      throttlers: [{ ttl: 60_000, limit: 100 }],
+      skipIf: () =>
+        process.env.NODE_ENV === 'test' &&
+        process.env.THROTTLE_DISABLED === 'true',
+    }),
     PrismaModule,
     MailModule,
     HealthModule,

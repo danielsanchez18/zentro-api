@@ -10,6 +10,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { Trim } from '../../common/validation';
 
 export const INDUSTRIES = [
   'RESTAURANT',
@@ -31,6 +32,7 @@ export const CAPABILITIES = [
 export const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export class CreateOrganizationDto {
+  @Trim()
   @IsString()
   @MinLength(2, { message: 'El nombre debe tener al menos 2 caracteres.' })
   @MaxLength(80)
@@ -47,6 +49,7 @@ export class CreateOrganizationDto {
 
 export class UpdateOrganizationDto {
   @IsOptional()
+  @Trim()
   @IsString()
   @MinLength(2)
   @MaxLength(80)
@@ -54,6 +57,7 @@ export class UpdateOrganizationDto {
 }
 
 export class SetupBranchDto {
+  @Trim()
   @IsString()
   @MinLength(2, { message: 'Cada sucursal necesita un nombre.' })
   @MaxLength(80)

@@ -1,10 +1,5 @@
-import {
-  IsEmail,
-  IsNotEmpty,
-  IsString,
-  Matches,
-  MinLength,
-} from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, Matches } from 'class-validator';
+import { StrongPassword } from '../../../common/validation';
 
 export class ResetPasswordDto {
   @IsEmail({}, { message: 'Ingresa un correo válido' })
@@ -15,6 +10,6 @@ export class ResetPasswordDto {
   code: string;
 
   @IsString()
-  @MinLength(8, { message: 'La contraseña debe tener al menos 8 caracteres' })
+  @StrongPassword()
   newPassword: string;
 }
